@@ -1,43 +1,212 @@
-Preciso Desenvolver um codigo utilizando padrão de arquitetura de software uma WebAPI Rest que
-consulta WebAPI da plataforma INFODENGUE.
-• O padrão de arquitetura deve ser escolhido pelo participante;
-• O banco de dados utilizado deve ser SQL e providenciado pelo próprio participante;
-• A linguagem deve ser C#;
-• A WebAPI Rest deve ser aberta, podendo ser utilizada por qualquer pessoa, apenas
-informando nome e CPF;
-• Os dados do solicitante (Nome e CPF) devem ser salvos no banco e não podem se
-repetir. Se um usuário já solicitou alguma vez, na próxima deve apenas referenciá-lo;
-• Os dados da consulta à API da plataforma INFODENGUE deve ser salvo no banco;
-• Podem ser realizadas diversas requisições de relatórios;
-• Todo relatório deve ser salvo em banco com as seguintes informações:
-❖ Data da solicitação;
-❖ Arbovirose;
-❖ Solicitante;
-❖ Semana de início;
-❖ Semana de término;
-❖ Código IBGE;
-❖ Município;
-• Deve existir relacionamento entre as tabelas de solicitante e relatório;
-• Deve ser possível listar todos os relatórios salvos no banco;
-• Relatórios:
-❖ Listar todos os dados epidemiológicos do município do Rio de Janeiro e São Paulo;
-❖ Listar os dados epidemiológicos dos municípios pelo código IBGE;
-❖ Listar o total de casos epidemiológicos dos municípios do Rio de Janeiro e São Paulo;
-❖ Listar o total de casos epidemiológicos dos municípios por arbovirose;
-❖ Listar os solicitantes;
-• A consulta de códigos IBGE dos munícipios pode ser realizada no link:
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
-https://www.ibge.gov.br/explica/codigos-dos-
-municipios.php#:~:text=A%20Tabela%20de%20C%C3%B3digos%20de%20Munic%C3
+namespace InfoDengueAPI
+{
+    public class Program
+    {
+        public static void Main(string[] args)
+        {
+            CreateHostBuilder(args).Build().Run();
+        }
 
-%ADpios
+        public static IHostBuilder CreateHostBuilder(string[] args) =>
+            Host.CreateDefaultBuilder(args)
+                .ConfigureWebHostDefaults(webBuilder =>
+                {
+                    webBuilder.UseStartup<Startup>();
+                });
+    }
 
-• Listar os dados epidemiológicos dos municípios pelo código IBGE, semana
-início, semana fim e arbovirose;
-Documentação da API plataforma INFODENGUE:
-https://info.dengue.mat.br/services/api
+    public class Startup
+    {
+        public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddDbContext<AppDbContext>(options =>
+                options.UseSqlServer("Server=your_server;Database=InfoDengueDB;User Id=your_user;Password=your_password;"));
+            services.AddScoped<ISolicitanteService, SolicitanteService>();
+            services.AddScoped<IRelatorioService, RelatorioService>();
+            services.AddHttpClient();
+            services.AddControllers();
+        }
 
-• Deve ser colocado em um repositório aberto do github, com o arquivo dump do
-banco sql usado no projeto.
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        {
+            if (env.IsDevelopment())
+            {
+                app.UseDeveloperExceptionPage();
+            }
 
-Me dê o projeto pronto pro gentileza .
+            app.UseRouting();
+
+            app.UseEndpoints(endpoints =>
+            {
+                endpoints.MapControllers();
+            });
+        }
+    }
+
+    public class AppDbContext : DbContext
+    {
+        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+        public DbSet<Solicitante> Solicitantes { get; set; }
+        public DbSet<Relatorio> Relatorios { get; set; }
+    }
+
+    public class Solicitante
+    {
+        public int Id { get; set; }
+        public string Nome { get; set; }
+        public string CPF { get; set; }
+        public ICollection<Relatorio> Relatorios { get; set; }
+    }
+
+    public class Relatorio
+    {
+        public int Id { get; set; }
+        public DateTime DataSolicitacao { get; set; }
+        public string Arbovirose { get; set; }
+        public int SemanaInicio { get; set; }
+        public int SemanaTermino { get; set; }
+        public int CodigoIBGE { get; set; }
+        public string Municipio { get; set; }
+        public int SolicitanteId { get; set; }
+        public Solicitante Solicitante { get; set; }
+    }
+
+    public interface ISolicitanteService
+    {
+        Task<Solicitante> AddOrUpdateSolicitanteAsync(string nome, string cpf);
+        Task<List<Solicitante>> GetAllSolicitantesAsync();
+    }
+
+    public class SolicitanteService : ISolicitanteService
+    {
+        private readonly AppDbContext _context;
+
+        public SolicitanteService(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<Solicitante> AddOrUpdateSolicitanteAsync(string nome, string cpf)
+        {
+            var solicitante = await _context.Solicitantes.FirstOrDefaultAsync(s => s.CPF == cpf);
+            if (solicitante == null)
+            {
+                solicitante = new Solicitante { Nome = nome, CPF = cpf };
+                _context.Solicitantes.Add(solicitante);
+                await _context.SaveChangesAsync();
+            }
+            return solicitante;
+        }
+
+        public async Task<List<Solicitante>> GetAllSolicitantesAsync()
+        {
+            return await _context.Solicitantes.ToListAsync();
+        }
+    }
+
+    public interface IRelatorioService
+    {
+        Task<Relatorio> CreateRelatorioAsync(Relatorio relatorio);
+        Task<List<Relatorio>> GetAllRelatoriosAsync();
+        Task<List<Relatorio>> GetRelatoriosByMunicipioAsync(string municipio);
+    }
+
+    public class RelatorioService : IRelatorioService
+    {
+        private readonly AppDbContext _context;
+        private readonly IHttpClientFactory _httpClientFactory;
+
+        public RelatorioService(AppDbContext context, IHttpClientFactory httpClientFactory)
+        {
+            _context = context;
+            _httpClientFactory = httpClientFactory;
+        }
+
+        public async Task<Relatorio> CreateRelatorioAsync(Relatorio relatorio)
+        {
+            _context.Relatorios.Add(relatorio);
+            await _context.SaveChangesAsync();
+            return relatorio;
+        }
+
+        public async Task<List<Relatorio>> GetAllRelatoriosAsync()
+        {
+            return await _context.Relatorios.Include(r => r.Solicitante).ToListAsync();
+        }
+
+        public async Task<List<Relatorio>> GetRelatoriosByMunicipioAsync(string municipio)
+        {
+            return await _context.Relatorios.Where(r => r.Municipio == municipio).ToListAsync();
+        }
+    }
+
+    [ApiController]
+    [Route("api/[controller]")]
+    public class SolicitantesController : ControllerBase
+    {
+        private readonly ISolicitanteService _solicitanteService;
+
+        public SolicitantesController(ISolicitanteService solicitanteService)
+        {
+            _solicitanteService = solicitanteService;
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> AddSolicitante([FromBody] Solicitante solicitante)
+        {
+            var result = await _solicitanteService.AddOrUpdateSolicitanteAsync(solicitante.Nome, solicitante.CPF);
+            return Ok(result);
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> GetSolicitantes()
+        {
+            var result = await _solicitanteService.GetAllSolicitantesAsync();
+            return Ok(result);
+        }
+    }
+
+    [ApiController]
+    [Route("api/[controller]")]
+    public class RelatoriosController : ControllerBase
+    {
+        private readonly IRelatorioService _relatorioService;
+
+        public RelatoriosController(IRelatorioService relatorioService)
+        {
+            _relatorioService = relatorioService;
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> AddRelatorio([FromBody] Relatorio relatorio)
+        {
+            var result = await _relatorioService.CreateRelatorioAsync(relatorio);
+            return Ok(result);
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> GetRelatorios()
+        {
+            var result = await _relatorioService.GetAllRelatoriosAsync();
+            return Ok(result);
+        }
+
+        [HttpGet("municipio/{municipio}")]
+        public async Task<IActionResult> GetRelatoriosByMunicipio(string municipio)
+        {
+            var result = await _relatorioService.GetRelatoriosByMunicipioAsync(municipio);
+            return Ok(result);
+        }
+    }
+}
